@@ -1,4 +1,24 @@
 
+"""
+Volcanic Field Simulation Toolkit
+
+Functions for generating synthetic volcanic vent distributions and
+evaluating spatial predictability using convex hull growth and
+leave-k-out experiments of observed data.
+
+Please cite as:
+    Miller et al. (submitted). 
+    "Evolution of the Auckland Volcanic Field (New Zealand) boundary"
+
+Notes:
+- All geometry is in metres unless explicitly converted
+- Designed for reproducibility of figures and analyses
+
+Author: E. Judd
+Created: 2026-05
+Last Modified: 2026-06
+"""
+
 #------------------------
 # Imports
 #------------------------
