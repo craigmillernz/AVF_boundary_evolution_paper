@@ -11,13 +11,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib.ticker as tck
-from pathlib import Path
 
 # SET GLOABL FONT PARAMETERS
 font = {"family": "Arial", "weight": "normal", "size": 8}
 plt.rc("font", **font)
 
-data_file = Path(__file__).resolve().parent / "data" / "AVF_main_vents.csv"
+data_file = "D:/Dropbox/AVF/data/AVF_main_vents.csv"
 vents = pd.read_csv(data_file, comment="#")
 
 vents = vents.sort_values(by="Hopkins2020_Age")
@@ -176,6 +175,14 @@ def tukey_depth_2d(point, points):
     return min_count
 
 
+# vents = pd.read_csv("D:/Dropbox/AVF/AVF_main_vents.csv", comment="#")
+
+# vents = (
+#    vents.dropna(subset=["Hopkins2020_Age", "easting", "northing"])
+#    .sort_values("Hopkins2020_Age", ascending=False)
+#    .reset_index(drop=True)
+# )
+
 records = []
 
 for i in range(len(vents)):
@@ -305,7 +312,6 @@ ax.text(
 )
 
 plt.savefig(
-    data_file=Path(__file__).resolve().parent
-    / "Figure4_avf_area_vs_age_tukey_depth_combined.png",
+    "D:/dropbox/AVF/paper/Figures/Figure4_avf_area_vs_age_tukey_depth_combined.png",
     dpi=300,
 )

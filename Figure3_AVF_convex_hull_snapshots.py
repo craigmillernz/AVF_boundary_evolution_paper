@@ -10,13 +10,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import geopandas as gpd
-from pathlib import Path
+
 
 # SET GLOABL FONT PARAMETERS
 font = {"family": "Arial", "weight": "normal", "size": 8}
 plt.rc("font", **font)
 
-data_file = Path(__file__).resolve().parent / "data" / "AVF_main_vents.csv"
+data_file = "D:/Dropbox/AVF/data/AVF_main_vents.csv"
 vents = pd.read_csv(data_file, comment="#")
 
 vents = vents.sort_values(by="Hopkins2020_Age")
@@ -506,7 +506,7 @@ print(f"Hull area {hull.area / 1000 / 1000} km^2")
 
 plt.subplots_adjust(wspace=0.01, hspace=0.04)
 
+
 plt.savefig(
-    Path(__file__).resolve().parent / "Figure3_convex_hull_snapshots.png",
-    dpi=300,
+    "D:/dropbox/AVF/paper/Figures/Figure3_convex_hull_snapshots.png", dpi=300
 )

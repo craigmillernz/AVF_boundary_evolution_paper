@@ -8,13 +8,16 @@ Created on Wed Dec 10 08:39:06 2025
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from pathlib import Path
 
 # SET GLOABL FONT PARAMETERS
 font = {"family": "Arial", "weight": "normal", "size": 8}
 plt.rc("font", **font)
 
-data_file = Path(__file__).resolve().parent / "data" / "AVF_main_vents.csv"
+data_file = "D:/Dropbox/AVF/data/AVF_main_vents.csv"
+data_file = "C:/Users/craigm/Dropbox/AVF/data/AVF_main_vents.csv"
+
+
+
 vents = pd.read_csv(data_file, comment="#")
 vents_all = pd.read_csv(data_file, comment="#")
 
@@ -125,5 +128,5 @@ ax.set_xlabel("Age [ka]")
 ax.set_ylabel("Eruption number")
 ax.set_ylim(52, 0)
 plt.savefig(
-    Path(__file__).resolve().parent / "Figure2_AVF_age_vs_number.png", dpi=300
+    "C:/Users/craigm/Dropbox/AVF/paper/revised_version/Figures/Figure2_AVF_age_vs_number.png", dpi=300
 )

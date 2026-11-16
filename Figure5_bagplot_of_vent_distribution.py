@@ -10,11 +10,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from shapely.geometry import MultiPoint, Point
 import geopandas as gpd
-from pathlib import Path
 
 # SET GLOABL FONT PARAMETERS
 font = {"family": "Arial", "weight": "normal", "size": 8}
 plt.rc("font", **font)
+
+coastline = "D:/Dropbox/GIS/NZTM/Coastlines_and_Islands_Polygons_50K.shp"
+coast = gpd.read_file(coastline)
 
 
 def tukey_depth_2d(point, points):
@@ -46,17 +48,7 @@ def tukey_depth_2d(point, points):
     return min_count
 
 
-coastline = (
-    Path(__file__).resolve().parent
-    / "data"
-    / "Coastlines_and_Islands_Polygons_50K.shp"
-)
-
-coast = gpd.read_file(coastline)
-
-data_file = Path(__file__).resolve().parent / "data" / "AVF_main_vents.csv"
-
-vents = pd.read_csv(data_file, comment="#")
+vents = pd.read_csv("D:/Dropbox/AVF/data/AVF_main_vents.csv", comment="#")
 
 vents = vents.dropna(subset=["easting", "northing"]).reset_index(drop=True)
 
@@ -153,7 +145,4 @@ ax.set_xlim(1745000, 1780000)
 ax.set_ylim(5896500, 5933500)
 ax.set_ylabel("Northing NZTM [m]")
 ax.set_xlabel("Easting NZTM [m]")
-plt.savefig(
-    data_file=Path(__file__).resolve().parent / "Figure5_AVF_bagplot.png",
-    dpi=300,
-)
+plt.savefig("D:/dropbox/AVF/paper/Figures/Figure5_AVF_bagplot.png", dpi=300)

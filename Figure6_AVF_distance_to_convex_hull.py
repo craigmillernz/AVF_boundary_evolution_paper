@@ -13,13 +13,12 @@ from shapely.geometry import Point, MultiPoint, Polygon, LineString
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
-from pathlib import Path
 
 # SET GLOBAL FONT PARAMETERS
 font = {"family": "Arial", "weight": "normal", "size": 8}
 plt.rc("font", **font)
 
-data_file = Path(__file__).resolve().parent / "data" / "AVF_main_vents.csv"
+data_file = "D:/Dropbox/AVF/data/AVF_main_vents.csv"
 vents = pd.read_csv(data_file, comment="#")
 
 # Sort oldest to youngest and drop vents without ages
@@ -134,7 +133,31 @@ ax2.legend(handles=legend_elements)
 
 plt.tight_layout()
 plt.savefig(
-    data_file=Path(__file__).resolve().parent / "Figure6_distance_to_hull.png",
-    dpi=300,
+    "D:/dropbox/AVF/paper/Figures/Figure6_distance_to_hull.png", dpi=300
 )
 plt.show()
+
+# %% Time gaps between eruptions outside the convex hull
+outside = df_results[df_results["signed_distance_m"] > 0].sort_values(
+    "Hopkins2020_Age", ascending=False
+)
+outside_ages = outside["Hopkins2020_Age"].values
+time_gaps = outside_ages[:-1] - outside_ages[1:]
+
+print("\nEruptions outside the convex hull:")
+print(
+    outside[["name", "Hopkins2020_Age", "signed_distance_km"]].to_string(
+        index=False
+    )
+)
+print("\nTime gaps between successive eruptions outside the hull [ka]:")
+for j in range(len(time_gaps)):
+    print(
+        f"  {outside.iloc[j]['name']} → {outside.iloc[j + 1]['name']}: "
+        f"{time_gaps[j]:.1f} ka"
+    )
+print(f"\nMean time gap: {time_gaps.mean():.1f} ka")
+print(f"Median time gap: {pd.Series(time_gaps).median():.1f} ka")
+print(f"Std dev time gap: {time_gaps.std():.1f} ka")
+
+# %%
