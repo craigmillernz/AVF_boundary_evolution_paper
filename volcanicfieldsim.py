@@ -385,9 +385,7 @@ def sequentialhullinfo(
     ycol: str = 'northing',
     ordercol: str = 'index',
     startrect: tuple[float, float] = (28884, 16481),
-    center: tuple[float, float] = (76614, 71891),
-    rotationdeg: float = 90 - 2.6,
-    buffers: float | list[float] | None = None,   # metres
+    area_prct: float | list[float] | None = None,
     hullareacol: str = 'hullareakm2',
     arearatiocol: str = 'arearatio',
     insidecol: str = 'ventinprevhull',
@@ -399,55 +397,49 @@ def sequentialhullinfo(
     df[ordercol] = pd.to_numeric(df[ordercol], errors='coerce')
     df[hullareacol] = np.nan
     df[arearatiocol] = np.nan
-    if buffers is None:
-        buffers = []
-    elif isinstance(buffers, (int, float)):
-        buffers = [buffers]
-    buffer_info = [] 
-    for buf in buffers:
-        if buf > 0:
-            buf_m = int(round(buf))
-            col = f'bufferedarearatio_{buf_m}m'
+    if area_prct is None:
+        area_prct = []
+    elif isinstance(area_prct, (int, float)):
+        area_prct = [area_prct]
+    area_prct_info = []
+    for pct in area_prct:
+        pct = float(pct)
+        if pct > 0:
+            pct_label = f'{pct:g}'
+            col = f'arearatio_{pct_label}%'
             df[col] = np.nan
-            buffer_info.append((buf, buf_m, col))
+            area_prct_info.append((pct, col))
     df[insidecol] = pd.Series(pd.NA, dtype="boolean")
     df[distcol] = np.nan
-
-    # starting ellipse area (m²)
     rectw, recth = startrect
     a = rectw / 2.0
     b = recth / 2.0
     startarea = trueellipsearea(a, b)
-
-    # precompute buffered reference areas
-    startareas_buf = {
-        col: trueellipsearea(a + buf, b + buf)
-        for buf, _, col in buffer_info
+    startareas_prct = {
+        col: startarea * (1.0 + pct / 100.0)
+        for pct, col in area_prct_info
     }
-
-    # valid vents in eruption order
     valid = df.dropna(subset=[ordercol]).sort_values(ordercol)
     points = valid[[xcol, ycol]].to_numpy(float)
     row_indices = valid.index.to_numpy()
-
     prevhull = None
-
     for i in range(len(points)):
         t = i + 1
         p = tuple(points[i])
-
-        # distance/inside previous hull
         if t <= 2:
             df.loc[row_indices[i], insidecol] = np.nan
             df.loc[row_indices[i], distcol] = np.nan
         else:
             inside = pointinconvexpolygon(p, prevhull)
+
             df.loc[row_indices[i], insidecol] = bool(inside)
+
             df.loc[row_indices[i], distcol] = (
-                0.0 if inside else distancepointtopolygon(p, prevhull) / 1000.0
+                0.0
+                if inside
+                else distancepointtopolygon(p, prevhull) / 1000.0
             )
 
-        # current hull area
         if t < 3:
             hullarea = 0.0
             prevhull = points[:t, :].copy()
@@ -456,24 +448,27 @@ def sequentialhullinfo(
             hullarea = polygonarea(hull)
             prevhull = hull
 
-        # unbuffered area ratio
         df.loc[row_indices[i], hullareacol] = hullarea
+
         df.loc[row_indices[i], arearatiocol] = (
-            hullarea / startarea if startarea > 0 else np.nan
+            hullarea / startarea
+            if startarea > 0
+            else np.nan
         )
 
-        # buffered area ratios
-        for _, _, col in buffer_info:
+        for _, col in area_prct_info:
+            reference_area = startareas_prct[col]
             df.loc[row_indices[i], col] = (
-                hullarea / startareas_buf[col]
-                if startareas_buf[col] > 0 else np.nan
+                hullarea / reference_area
+                if reference_area > 0
+                else np.nan
             )
 
-    # save if requested
     if savepath is not None:
         df.to_csv(savepath, index=False)
 
     return df
+
 
 def simulateone(n_eruptions: int,
                 coordsystem: str = 'cartesian',
@@ -849,7 +844,8 @@ def plotarearatio(
     ensemble,
     percentiles,
     observed=None,
-    bufferedarearatiocol: list[str] | None = None,
+    boundingellipse=None,
+    areapctratiocol: list[str] | None = None,
     synthetic_color='#018571',
     observed_color='#a6611a'
 ):
@@ -882,7 +878,7 @@ def plotarearatio(
     if 50 in piv.columns:
         ax.plot(
             piv.index, piv[50],
-            color=synthetic_color, lw=1.5,
+            color=synthetic_color, lw=2,
             label='Synthetic median'
         )
 
@@ -895,27 +891,40 @@ def plotarearatio(
 
         ax.plot(
             obs['index'], obs['arearatio'],
-            color=observed_color, lw=1,
+            color=observed_color, lw=1.5,
             label='AVF (observed)'
         )
 
-        # --- observed (buffered) ---
-        if bufferedarearatiocol is not None:
-            for col in bufferedarearatiocol:
-                if col in obs.columns:
-                    buf_label = col.replace('bufferedarearatio_', '')
-                    ax.plot(
-                        obs['index'], obs[col],
-                        color=observed_color,
-                        lw=1,
-                        ls='--',
-                        label=f'AVF (with {buf_label} buffer)'
-                    )
+        # --- observed (percentage-adjusted starting area) ---
+        if areapctratiocol is not None:
+            if isinstance(areapctratiocol, str):
+                areapctratiocol = [areapctratiocol]
+            colours = plt.get_cmap('BrBG')(np.linspace(0, 0.3,  len(areapctratiocol)))
+            # Starting ellipse geometry
+            A = np.pi * boundingellipse['a'] * boundingellipse['b']
+            P = np.pi * (3 * (boundingellipse['a'] + boundingellipse['b']) -
+                            np.sqrt((3*boundingellipse['a'] + boundingellipse['b']) *
+                                    (boundingellipse['a'] + 3*boundingellipse['b'])))
+            for col, colour in zip(areapctratiocol, colours):
+                pct_label = col.replace('arearatio_', '').replace('%', '')
+                pct = float(pct_label) / 100
+                # Equivalent constant-distance buffer (m)
+                buffer_m = (-P + np.sqrt(P**2 + 4 * np.pi * A * pct)) / (2 * np.pi)
+                ax.plot(
+                    obs['index'],
+                    obs[col],
+                    color=colour,
+                    lw=1,
+                    ls='--',
+                    dashes=(2, 1),
+                    label=f'AVF +{pct_label}% area ({buffer_m:.0f} m buffer)'
+                )
 
     ax.set_xlabel('Eruption count [t]')
     ax.set_ylabel('Area ratio')
     ax.grid(True, alpha=0.3)
-    ax.legend(frameon=False)
+    leg = ax.legend(frameon=True, facecolor='white', edgecolor='black', framealpha=1)
+    leg.get_frame().set_linewidth(0.5)
     ylow, _ = ax.get_ylim()
     ax.set_ylim(ylow, 1.0)
 
@@ -941,7 +950,7 @@ def plotprctoutside(
     ax.set_xlabel('Eruption count [t]')
     ax.set_ylabel('Vent outside hull [%]')
     ax.grid(True, alpha=0.3)
-    ax.legend(frameon=False)
+    ax.legend(frameon=True, facecolor='white', edgecolor='none', framealpha=1)
 
 def plotprctinside(
     ax,
@@ -957,7 +966,7 @@ def plotprctinside(
 
     ax.plot(
         pct_out.index, 100-pct_out.values,
-        color=synthetic_color, lw=1.5,
+        color=synthetic_color, lw=2,
         label='Synthetic'
     )
 
@@ -965,8 +974,8 @@ def plotprctinside(
     ax.set_xlabel('Eruption count [t]')
     ax.set_ylabel('Vent within previous hull [%]')
     ax.grid(True, alpha=0.3)
-    ax.legend(frameon=False)
-
+    leg = ax.legend(frameon=True, facecolor='white', edgecolor='black', framealpha=1)
+    leg.get_frame().set_linewidth(0.5)
 
 def plotdistanceoutside(
     ax,
@@ -1047,11 +1056,31 @@ def plotdistanceoutside(
                 label='Observed AVF'
             )
 
-    ax.set_xlabel('Eruption count (t)')
-    ax.set_ylabel('Distance outside hull (km)')
+    ax.set_xlabel('Eruption count [t]')
+    ax.set_ylabel('Distance outside hull [km]')
     ax.grid(True, alpha=0.3)
-    ax.legend(frameon=False)
+    leg = ax.legend(frameon=True, facecolor='white', edgecolor='black', framealpha=1)
+    leg.get_frame().set_linewidth(0.5)
 
+def plotdistprevhist(ax, ensemble: pd.DataFrame, binwidth: int = 250, synthetic_color='#018571', lower_percentile: float = 5):
+    """Histogram of distance to previous vent across all simulations and times."""
+    d = ensemble['distprev'].to_numpy(dtype=float)
+    d = d[np.isfinite(d) & (d > 0)]
+    N = d.size
+
+    mu, sd = float(d.mean()), float(d.std(ddof=1)) if N > 1 else 0.0
+    lower = float(np.percentile(d, lower_percentile))
+    bins = np.arange(0, np.ceil(d.max() / binwidth) * binwidth + binwidth, binwidth)
+    weights = np.ones_like(d) * (100.0 / N)
+
+    ax.hist(d, bins=bins, weights=weights, color=synthetic_color, edgecolor='white', linewidth=0, alpha=0.7, label='Synthetic')
+    ax.axvline(lower, color='black', linestyle='--', linewidth=1.2, label=f'{lower_percentile:g}th percentile\n({lower:.0f}m)')
+
+    ax.set_xlabel('Distance to previous vent [m]')
+    ax.set_ylabel('Frequency [%]')
+    ax.grid(True, axis='y', alpha=0.3)
+    leg = ax.legend(frameon=True, facecolor='white', edgecolor='black', framealpha=1)
+    leg.get_frame().set_linewidth(0.5)
 
 def summaryplots(
     ensemble: pd.DataFrame,
@@ -1062,7 +1091,7 @@ def summaryplots(
     ncolor: int = 10,
     hullalpha: float = 0.001,
     figures: list[tuple[str, list[str]]] = [('summary', ['arearatio'])],
-    bufferedarearatiocol: list[str] | None = None,
+    areapctratiocol: list[str] | None = None,
     synthetic_color: str = '#018571',
     observed_color: str = '#a6611a',
     figsize_panel: tuple[float, float] = (4, 3),
@@ -1076,25 +1105,31 @@ def summaryplots(
     for fidx, (figname, panels) in enumerate(figures):
         n = len(panels)
 
+        # Determine subplot layout
+        if n < 3:
+            nrows, ncols = 1, n
+        else:
+            nrows, ncols = int(np.ceil(n / 2)), 2
+
         fig, axes = plt.subplots(
-            1, n,
-            figsize=(figsize_panel[0] * n, figsize_panel[1]),
-            sharex=True
+            nrows, ncols,
+            figsize=(figsize_panel[0] * ncols, figsize_panel[1] * nrows),
+            squeeze=False
         )
 
-        if n == 1:
-            axes = [axes]
+        axes = axes.flatten()
 
-        for i, (ax, pname) in enumerate(zip(axes, panels)):
+        # Plot panels
+        for i, pname in enumerate(panels):
+            ax = axes[i]
 
-            #------ Spatial panel------
+            # Spatial panel
             if pname == 'spatial':
                 if boundingellipse is None:
                     raise ValueError("Panel 'spatial' requires boundingellipse")
 
                 plotspatial(
-                    ax=ax,
-                    ensemble=ensemble,
+                    ax=ax, ensemble=ensemble,
                     center=boundingellipse['center'],
                     a=boundingellipse['a'],
                     b=boundingellipse['b'],
@@ -1104,48 +1139,47 @@ def summaryplots(
                     hullalpha=hullalpha
                 )
 
-            #------ Area ratio------
+            # Area ratio
             elif pname == 'arearatio':
                 plotarearatio(
-                    ax=ax,
-                    ensemble=ensemble,
+                    ax=ax, ensemble=ensemble,
                     percentiles=percentiles,
                     observed=observed,
-                    bufferedarearatiocol=bufferedarearatiocol,
+                    boundingellipse=boundingellipse,
+                    areapctratiocol=areapctratiocol,
                     synthetic_color=synthetic_color,
                     observed_color=observed_color
                 )
 
-            #------ % outside------
+            # % outside
             elif pname == 'prctoutside':
-                plotprctoutside(
-                    ax=ax,
-                    ensemble=ensemble,
-                    synthetic_color=synthetic_color,
-                )
+                plotprctoutside(ax=ax, ensemble=ensemble, synthetic_color=synthetic_color)
 
-            #------ % inside------
+            # % inside
             elif pname == 'prctinside':
-                plotprctinside(
-                    ax=ax,
-                    ensemble=ensemble,
-                    synthetic_color=synthetic_color,
-                )
+                plotprctinside(ax=ax, ensemble=ensemble, synthetic_color=synthetic_color)
 
-            #------ Distance outside------
+            # Distance outside hull
             elif pname == 'distanceoutside':
                 plotdistanceoutside(
-                    ax=ax,
-                    ensemble=ensemble,
+                    ax=ax, ensemble=ensemble,
                     observed=observed,
                     synthetic_color=synthetic_color,
                     observed_color=observed_color
+                )
+
+            # Distance to previous vent histogram
+            elif pname == 'distprevhist':
+                plotdistprevhist(
+                    ax=ax, ensemble=ensemble,
+                    synthetic_color=synthetic_color,
+                    lower_percentile=5
                 )
 
             else:
                 raise ValueError(f"Unknown panel name: '{pname}'")
 
-            # Panel lettering (only for multi-panel figures)
+            # Panel lettering
             if n > 1:
                 ax.text(
                     0.01, 0.98,
@@ -1154,6 +1188,11 @@ def summaryplots(
                     ha='left', va='top'
                 )
 
+        # Hide unused axes
+        for ax in axes[n:]:
+            ax.set_visible(False)
+
+        fig.tight_layout()
         figs.append(fig)
 
         #- optional save-
@@ -1354,42 +1393,160 @@ def ensembleplots(
         raise ValueError("mode must be 'overlay' or 'separate'")
 
 
-def plotdistprevhist(ensemble: pd.DataFrame,
-                     bins: int | str = 'auto',
-                     figsize: tuple[float, float] = (7.5, 4.5),
-                     savepath: str | None = None):
+# def plotdistprevhist(ensemble: pd.DataFrame,
+#                      bins: int | str = 'auto',
+#                      figsize: tuple[float, float] = (7.5, 4.5),
+#                      savepath: str | None = None):
+#     """
+#     Histogram of distance to previous vent (metres) across all simulations and times.
+#     Y-axis in percent. Annotates mean, std, and N.
+#     """
+
+#     d = ensemble['distprev'].to_numpy(dtype=float)
+#     d = d[np.isfinite(d)]
+#     d = d[d > 0.0]  
+
+#     N = d.size
+#     fig, ax = plt.subplots(figsize=figsize)
+#     if N == 0:
+#         ax.text(0.5, 0.5, 'No distances to plot', transform=ax.transAxes,
+#                 ha='center', va='center')
+#         ax.set_axis_off()
+#         if savepath:
+#             fig.savefig(savepath, dpi=200, bbox_inches='tight')
+#         return fig
+
+#     mu = float(d.mean())
+#     sd = float(d.std(ddof=1)) if N > 1 else 0.0
+
+#     w = np.ones_like(d) * (100.0 / N)  
+#     ax.hist(d, bins=bins, weights=w, color='#4c78a8', edgecolor='white', linewidth=0.5)
+#     ax.set_xlabel('Distance to previous vent (m)')
+#     ax.set_ylabel('Frequency [%]')
+#     ax.grid(True, axis='y', alpha=0.25)
+
+#     txt = f'N = {N:,}\nmean = {mu:,.1f} m\nstd = {sd:,.1f} m'
+#     bbox = dict(boxstyle='round,pad=0.35', facecolor='white', edgecolor='0.7', alpha=0.9)
+#     ax.text(0.98, 0.98, txt, transform=ax.transAxes, ha='right', va='top', fontsize=10, bbox=bbox)
+
+#     if savepath:
+#         fig.savefig(savepath, dpi=200, bbox_inches='tight')
+#     return fig
+
+
+# Additional analyses
+def computespatialpredictability(
+    ensemble: pd.DataFrame,
+    n_eruptions: int = 51,
+    percentiles: list[float] | None = None,
+    return_mode: str = "ensemble"
+) -> pd.DataFrame:
     """
-    Histogram of distance to previous vent (metres) across all simulations and times.
-    Y-axis in percent. Annotates mean, std, and N.
+    Calculate spatial predictability metrics for each simulation in a synthetic
+    ensemble, mirroring the approach used for the observed AVF.
+
+    Metrics calculated at each eruption:
+      - pin​side:
+            Cumulative probability that an eruption falls inside
+            the previous convex hull.
+      - growth:
+            Fractional hull-area growth relative to the previous hull:
+                g_i = (A_new - A_prior) / A_prior
+      - efficiency:
+            Hull efficiency / penalty score:
+                S_i = 1 / (1 + g_i)
+      - pgain:
+            Spatial probability gain:
+                PG_i = P_inside(i) / (A_prior / A_final)
+      - p_penalised:
+            Efficiency-penalised cumulative probability:
+                P_penalised(i) = P_inside(i) * S_i
+
+    Notes
+    -----
+    The first two eruptions cannot have a conventional convex hull, so
+    hull-growth and efficiency metrics begin at t >= 3.
+
+    P_inside is calculated cumulatively from eruptions for which
+    withinprevhull is defined.
+
+    The final hull area (A_final) is the hull area at n_eruptions for
+    each individual simulation.
     """
 
-    d = ensemble['distprev'].to_numpy(dtype=float)
-    d = d[np.isfinite(d)]
-    d = d[d > 0.0]  
+    # restrict to requested eruption range
+    df = ensemble.loc[ensemble['t'].between(1, n_eruptions)].copy()
+    df = df.sort_values(['simid', 't'])
 
-    N = d.size
-    fig, ax = plt.subplots(figsize=figsize)
-    if N == 0:
-        ax.text(0.5, 0.5, 'No distances to plot', transform=ax.transAxes,
-                ha='center', va='center')
-        ax.set_axis_off()
-        if savepath:
-            fig.savefig(savepath, dpi=200, bbox_inches='tight')
-        return fig
+    # calculate metrics for each simulation
+    results = []
+    for simid, g in df.groupby('simid', sort=True):
+        g = g.sort_values('t').copy()
+        # final hull area for this simulation
+        final_rows = g.loc[g['t'] == n_eruptions, 'hullarea']
+        final_area = float(final_rows.iloc[0])
+        # cumulative P_inside
+        inside = g['withinprevhull'].eq(True)
+        # Use only eruptions with a defined previous hull
+        valid_inside = g['withinprevhull'].notna()
+        inside_count = (inside.astype(int).where(valid_inside, 0).cumsum())
+        assessed_count = valid_inside.astype(int).cumsum()
+        g['pinside'] = (inside_count / assessed_count.replace(0, np.nan))
+        # previous hull area
+        g['priorhullarea'] = g['hullarea'].shift(1)
+        # fractional hull growth
+        # g_i = (A_new - A_prior) / A_prior
+        g['growth'] = ((g['hullarea'] - g['priorhullarea']) / g['priorhullarea'])
+        # hull efficiency
+        # S_i = 1 / (1 + g_i)
+        g['efficiency'] = (1.0 / (1.0 + g['growth']))
+        # spatial probability gain
+        # PG_i = P_inside / (A_prior / A_final)
+        g['pgain'] = (g['pinside'] / (g['priorhullarea'] / final_area))
+        # efficiency-penalised P_inside
+        # P_penalised = P_inside * S_i
+        g['p_penalised'] = (g['pinside'] * g['efficiency'])
+        # save results
+        results.append(
+            g[['simid',
+               't',
+                'pinside',
+                'growth',
+                'efficiency',
+                'pgain',
+                'p_penalised',
+                'hullarea',
+                'priorhullarea']
+            ].assign(finalhullarea=final_area))
 
-    mu = float(d.mean())
-    sd = float(d.std(ddof=1)) if N > 1 else 0.0
+    results = pd.concat(results, ignore_index=True)
+    # return simulation values
+    if return_mode == 'ensemble':
+        return results
+    # calculate ensemble percentiles
+    metrics = [
+        'pinside',
+        'growth',
+        'efficiency',
+        'pgain',
+        'p_penalised'
+    ]
+    out = []
+    for t, g in results.groupby('t', sort=True):
+        if t < 4:
+            continue
+        for metric in metrics:
+            values = g[metric].dropna().to_numpy(dtype=float)
+            if len(values) == 0:
+                continue
+            for p in percentiles:
+                out.append({
+                    't': int(t),
+                    'metric': metric,
+                    'percentile': float(p),
+                    'value': float(
+                        np.percentile(values, p)
+                    )
+                })
 
-    w = np.ones_like(d) * (100.0 / N)  
-    ax.hist(d, bins=bins, weights=w, color='#4c78a8', edgecolor='white', linewidth=0.5)
-    ax.set_xlabel('Distance to previous vent (m)')
-    ax.set_ylabel('Frequency [%]')
-    ax.grid(True, axis='y', alpha=0.25)
-
-    txt = f'N = {N:,}\nmean = {mu:,.1f} m\nstd = {sd:,.1f} m'
-    bbox = dict(boxstyle='round,pad=0.35', facecolor='white', edgecolor='0.7', alpha=0.9)
-    ax.text(0.98, 0.98, txt, transform=ax.transAxes, ha='right', va='top', fontsize=10, bbox=bbox)
-
-    if savepath:
-        fig.savefig(savepath, dpi=200, bbox_inches='tight')
-    return fig
+    return pd.DataFrame(out)
